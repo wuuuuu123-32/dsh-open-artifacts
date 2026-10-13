@@ -4,6 +4,15 @@
   "description": "在会话行的「⋯」菜单和会话标题栏加「打开产物文件夹」：从会话日志里算出这个对话真正产出过文件的目录，直接用资源管理器打开，不用自己翻。",
   "type": "module",
   "license": "MIT",
+  "author": "wuuuuu123-32",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wuuuuu123-32/dsh-open-artifacts.git"
+  },
+  "homepage": "https://github.com/wuuuuu123-32/dsh-open-artifacts#readme",
+  "bugs": {
+    "url": "https://github.com/wuuuuu123-32/dsh-open-artifacts/issues"
+  },
   "keywords": [
     "dsh",
     "deepseek-harness",

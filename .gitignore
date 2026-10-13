@@ -1,0 +1,9 @@
+# 依赖
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+
+# 临时产物
+_tmp_*
+test/_out/
+*.log

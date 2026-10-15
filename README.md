@@ -24,8 +24,13 @@ DSH 的会话日志（`~/.dsh/sessions/<工作区编码>/<会话 id>/session.v4.
 本插件逐帧解压 zstd，然后：
 
 1. 取日志首帧的 `{"type":"session",…,"cwd":…}` 作为这个对话的工作目录（比投影缓存可靠）；
-2. 收集**成功**的 `write` / `edit` / `str_replace_editor` 调用 —— `tool/result` 里标了 `isError` 的会跳过；
-3. 再补上 `deliverables/presented` 事件里登记过的产物路径；
+2. 收集**成功**的写入类调用，两种事件都要扫：
+   - `tool/call` —— 模型直接调 `write` / `edit` / `str_replace_editor`，失败看 `tool/result` 里的 `isError`；
+   - `tool/ptc-dispatch` —— `run_code` 里调 `tools.write` / `tools.edit`。子进程里的调用**不会**产生
+     `tool/call`，只有这一条事件，它自带 `isError`。
+     （2026-10-15 补：漏掉它会让「整场都走 run_code」的对话被算成零产出 —— 点「产物」却提示「没有找到产物」。）
+3. 再补上 `present` 登记过的交付物路径，同样是两种来源：PTC 里调用的看 `tool/ptc-dispatch` 的
+   `files[].path`，顶层调用的看 `deliverables/presented` 事件；
 4. 把这些路径按工作目录下的**顶层目录**归类。
 
 所以结果是「这个对话真正写过东西的地方」，不是「工作区里有什么目录」。
@@ -98,6 +103,9 @@ DSH 启动时 `JSON.parse` 直接抛 `SyntaxError: Unexpected token '﻿'`，表
 
 ## 实现要点
 
+- **产出路径有两种来源，缺一不可**：`tool/call`（模型直调）和 `tool/ptc-dispatch`（`run_code` 里的嵌套调用）。
+  PTC 模式下 DSH 只把整次 `run_code` 记成一条 `tool/call`，程序内部调用的 `tools.write` / `tools.edit` /
+  `tools.present` 各留一条 `tool/ptc-dispatch`，带着 `name` / `arguments` / `isError` —— 信息够用。
 - **用的是正式插槽，不是 DOM 注入**：`sidebar.workspaces.session.menu.item`（会话行 ⋯ 菜单）和
   `conversation.session.header.actions`（标题旁动作）。这两个插槽在 DSH `0.2.0-rc.2` 上都直接给
   `sessionId`，不需要去猜 DOM 结构。现存的那几个同类插件都是 2026-08/09 写的，
@@ -113,8 +121,9 @@ DSH 启动时 `JSON.parse` 直接抛 `SyntaxError: Unexpected token '﻿'`，表
 
 ## 已知限制
 
-- 只统计**新写出来的文件**。纯读取、以及脚本自己运行时生成的文件（比如 Python 脚本画出的图）
-  不会出现在清单里 —— 会话日志里没有它们的绝对路径。
+- 只统计**日志里能看到路径的写入**：`write` / `edit` 写了哪个文件、`present` 声明了哪个文件。
+  纯读取，以及脚本自己运行时生成的文件（比如 Python 脚本画出来的图）不会出现在清单里 ——
+  会话日志里没有它们的绝对路径。想要这类产物进清单，在 `present` 里声明一下就行。
 - 大会话首次点击有几百毫秒延迟（有 30 秒缓存，连续点很快）。
 - 只在 Windows 上验证过（依赖 `explorer.exe`）。macOS / Linux 需要换掉打开方式那一行。
 

@@ -10,6 +10,9 @@
 > 没有任何「会话 → 产物目录」的映射。而同一个工作区下动辄几十个对话，
 > 打开根目录等于没打开 —— 真正想要的是「**这个**对话的产物在哪」。
 
+它还会在 DSH 启动后自己查一次 GitHub Releases：装了旧版本的人会在界面右下角看到一张更新提示卡片
+（见下方「有新版本会提示你」）。
+
 ## 和现成做法比
 
 | 方案 | 打开的位置 | 按会话区分 |
@@ -68,6 +71,26 @@ DSH 的会话日志（`~/.dsh/sessions/<工作区编码>/<会话 id>/session.v4.
 `allow` / `deny` / `cancel` / `ask`，`exec.arguments` 是只读的），所以只能「拒绝 + 说明」，
 让模型自己重试 —— 也正因为如此，拦截条件收得很窄，免得住变成一个碍事的插件。
 
+## 有新版本会提示你
+
+插件在 DSH 启动后 3 秒去查一次 GitHub Releases，跟本地 `package.json` 里的版本号比大小，
+有新版本就在界面右下角浮一张卡片：
+
+- 显示「当前 0.3.1 → 最新 0.4.0」，点「更新说明」展开这条 Release 的正文（发布时的 `--notes`）；
+- 「打开 Release 页面」跳到 GitHub；
+- 「忽略这个版本」把版本号记进 `localStorage` —— 同一个版本不再打扰，下次发了更高的版本还会提示。
+
+几个设计取舍：
+
+- **只认 GitHub Releases**：这个包没有发布到 npm（`registry.npmjs.org/dsh-open-artifacts` 返回 404），
+  Releases 是唯一权威来源；每次发布都建好 tag + Release，所以「最新 Release 的 tag」就是「最新版本号」。
+- **缓存 6 小时**：`api.github.com` 未认证限额是 60 次/小时，而界面每次挂载都要问一次。
+  检查结果（内存 + `~/.dsh/.cache/dsh-open-artifacts-update.json`）6 小时内有效，界面永远先读缓存；
+  网络失败再退避 30 分钟，免得连点刷新把限额打光。
+- **失败一律静默**：离线、代理挂了、被限流，什么都不弹、也不报错 —— 查更新失败不该打扰人。
+- **检查放在 host 端**：浏览器直连 `api.github.com` 会被 CORS 挡住（该 API 不放开跨源），
+  所以走 `GET /__open-artifacts/update`（默认吃缓存，`?force=1` 强制重查，同样只允许 127.0.0.1）。
+
 ## 安装
 
 ```bash
@@ -75,6 +98,9 @@ dsh plugin --profile desktop add github:wuuuuu123-32/dsh-open-artifacts
 ```
 
 装完**必须重启 DSH**（新增的插槽项不会热加载）。
+
+以后升级：在市场（dshmarket）插件页点「更新」，或重跑上面那条命令。装了旧版本时，
+插件自己也会在右下角提示。
 
 <details>
 <summary>手动安装（不用 <code>dsh plugin</code> 时）</summary>
@@ -115,7 +141,11 @@ DSH 启动时 `JSON.parse` 直接抛 `SyntaxError: Unexpected token '﻿'`，表
   这里直接 `spawn('explorer.exe', [dir])`，Node 在 Windows 下用宽字符 API 传参，中文路径不需要额外编码。
 - **只允许打开「这个会话产出过的目录」**：open 路由拿着 `sessionId` 重算一遍白名单，
   路径不在里面就 `403`，所以它不会变成一个任意路径开窗器。
-- 路由限制 `127.0.0.1`，host 端结果缓存 30 秒。
+- **更新检查是纯函数模块**（`lib/update.mjs`）：版本比较、Release 折算、缓存与退避都不碰 DSH 的 API，
+  `fetchImpl` / `now` / `cacheFile` 全是注入的 —— 所以能脱离 DSH 直接跑单测（`test/update.test.mjs`）。
+  缓存文件写在 `~/.dsh/.cache/` 而不是插件目录里：本机是 `link:` 安装，插件目录就是 git 仓库，
+  往里丢缓存会污染 `git status`。
+- 路由限制 `127.0.0.1`，扫描结果缓存 30 秒、更新检查缓存 6 小时。
 
 实测：15.4 MB / 21073 个事件的会话约 **0.57 秒**，几百个事件的小会话 **20 毫秒**。
 
@@ -125,16 +155,26 @@ DSH 启动时 `JSON.parse` 直接抛 `SyntaxError: Unexpected token '﻿'`，表
   纯读取，以及脚本自己运行时生成的文件（比如 Python 脚本画出来的图）不会出现在清单里 ——
   会话日志里没有它们的绝对路径。想要这类产物进清单，在 `present` 里声明一下就行。
 - 大会话首次点击有几百毫秒延迟（有 30 秒缓存，连续点很快）。
+- 更新检查要能连上 `api.github.com`：离线、被限流时静默跳过，不会提示更新（功能本身不受影响）。
 - 只在 Windows 上验证过（依赖 `explorer.exe`）。macOS / Linux 需要换掉打开方式那一行。
 
 ## 目录结构
 
 ```
-lib/index.js             host 端：扫描会话日志 + 三个 HTTP 路由 + 产物目录守门
-lib/client.js            客户端：菜单项、标题栏按钮、选择弹窗（手写模块表，无构建步骤）
+lib/index.js             host 端：扫描会话日志 + 四个 HTTP 路由 + 产物目录守门 + 更新检查的接线
+lib/client.js            客户端：菜单项、标题栏按钮、选择弹窗、更新提示（手写模块表，无构建步骤）
 lib/scan-session-core.mjs 会话日志定位与产出路径推导
+lib/update.mjs           更新检查：GitHub Releases 比对 + 6 小时缓存（无 DSH 依赖，可单测）
 lib/zstd-session.mjs     多帧 zstd 解压（会话日志是逐帧压缩的 JSONL）
 test/probe.mjs           脱离 DSH 单测扫描逻辑：node test/probe.mjs <sessionId>
+test/update.test.mjs     lib/update.mjs 单测：版本比较 / Release 折算 / 缓存 / 失败退避
+test/client.test.mjs     lib/client.js 离线单测：stub 掉 window 与 require，验证插槽注册与更新卡片
+```
+
+全部单测：
+
+```bash
+npm test        # = node test/update.test.mjs && node test/client.test.mjs
 ```
 
 ## 许可

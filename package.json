@@ -36,7 +36,7 @@
     "cordis.patch.yml"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.15"
   },
   "dsh": {
     "bundle": {
